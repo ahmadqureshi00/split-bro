@@ -243,7 +243,7 @@ export default function LandingPage() {
 
         {/* ── Footer ────────────────────────────────────── */}
         <p className="text-center text-xs text-zinc-400 animate-pop stagger-3 pb-4">
-          Built with ❤️ for hostel life · No data leaves your Khata
+          Built by Ahmad Qureshi with ❤️ for hostel life · No data leaves your Khata
         </p>
       </div>
     </main>
