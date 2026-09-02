@@ -19,6 +19,7 @@ import {
   ChevronDown,
   Users,
   Link2,
+  Trash2,
 } from "lucide-react";
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -42,6 +43,11 @@ export default function RoomPage() {
 
   /* ── Modal ─────────────────────────────────────────────────────────── */
   const [showAddExpense, setShowAddExpense] = useState(false);
+
+  /* ── Delete confirmation ────────────────────────────────────────────── */
+  const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   /* ── Clipboard toast ───────────────────────────────────────────────── */
   const [copied, setCopied] = useState(false);
@@ -192,6 +198,46 @@ export default function RoomPage() {
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+
+  /* ═══════════════════════════════════════════════════════════════════
+     Delete expense handler
+     ═══════════════════════════════════════════════════════════════════ */
+  const confirmDeleteExpense = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError("");
+
+    try {
+      // Optimistic: remove from local state immediately
+      const expId = deleteTarget.id;
+      setExpenses((prev) => prev.filter((e) => e.id !== expId));
+      setSplits((prev) => prev.filter((s) => s.expense_id !== expId));
+      setDeleteTarget(null);
+
+      // Supabase delete (cascade handles expense_splits)
+      const { error: delErr } = await supabase
+        .from("expenses")
+        .delete()
+        .eq("id", expId);
+
+      if (delErr) {
+        console.error("[Split Bro] Delete expense error:", delErr);
+        setDeleteError(delErr.message || "Failed to delete expense");
+        // Refetch to restore correct state
+        await fetchAll();
+        return;
+      }
+
+      // Full refetch to ensure consistency
+      await fetchAll();
+    } catch (err: unknown) {
+      console.error("[Split Bro] Delete error:", err);
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete expense");
+      await fetchAll();
+    } finally {
+      setDeleting(false);
+    }
   };
 
   /* ═══════════════════════════════════════════════════════════════════
@@ -362,7 +408,7 @@ export default function RoomPage() {
                   const expSplits = splits.filter((s) => s.expense_id === exp.id);
                   return (
                     <div key={exp.id} className="bento-card">
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
                           <h3 className="text-[0.875rem] font-bold text-zinc-900 truncate">{exp.title}</h3>
                           <p className="text-xs mt-0.5 text-zinc-500">
@@ -374,9 +420,18 @@ export default function RoomPage() {
                             {formatDate(exp.created_at)}
                           </p>
                         </div>
-                        <span className="text-[0.9375rem] font-extrabold flex-shrink-0 text-transparent bg-clip-text bg-gradient-to-r from-[#FF5C28] to-[#FF7A45] tabular-nums">
-                          {(room.currency || "Rs")} {exp.amount.toLocaleString()}
-                        </span>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <span className="text-[0.9375rem] font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#FF5C28] to-[#FF7A45] tabular-nums">
+                            {(room.currency || "Rs")} {exp.amount.toLocaleString()}
+                          </span>
+                          <button
+                            className="tap-target p-2 rounded-full text-zinc-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            onClick={() => setDeleteTarget(exp)}
+                            aria-label={`Delete ${exp.title}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                       {expSplits.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 mt-2.5">
@@ -474,6 +529,65 @@ export default function RoomPage() {
           onClose={() => setShowAddExpense(false)}
           onAdded={fetchAll}
         />
+      )}
+
+      {/* ── Delete Confirmation Modal ────────────────────── */}
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !deleting && setDeleteTarget(null)}>
+          <div className="modal-sheet" style={{ maxWidth: 360 }}>
+            <div className="text-center mb-5">
+              <div className="mx-auto mb-3 w-12 h-12 rounded-full bg-red-50 flex items-center justify-center">
+                <Trash2 className="w-5 h-5 text-red-500" />
+              </div>
+              <h2 className="text-lg font-bold text-zinc-900">Delete this expense?</h2>
+              <p className="text-sm text-zinc-500 mt-1.5">
+                This will recalculate everyone&apos;s balances.
+              </p>
+            </div>
+
+            {/* Expense preview */}
+            <div className="rounded-xl bg-zinc-50 border border-zinc-100 p-3 mb-5">
+              <p className="text-sm font-semibold text-zinc-800 truncate">{deleteTarget.title}</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                {(room?.currency || "Rs")} {deleteTarget.amount.toLocaleString()}
+                <span className="text-zinc-300 mx-1">·</span>
+                {memberMap.get(deleteTarget.paid_by) ?? "Unknown"}
+              </p>
+            </div>
+
+            {deleteError && (
+              <div className="flex items-start gap-2 text-sm font-medium text-red-600 bg-red-50 px-3.5 py-2.5 rounded-xl border border-red-100 mb-4">
+                <span className="shrink-0 mt-0.5">⚠️</span>
+                <span>{deleteError}</span>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                className="tap-target flex-1 py-3 rounded-2xl bg-zinc-100 text-zinc-700 font-semibold text-sm transition-colors hover:bg-zinc-200"
+                onClick={() => { setDeleteTarget(null); setDeleteError(""); }}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                className="tap-target flex-1 py-3 rounded-2xl bg-red-500 hover:bg-red-600 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-1.5"
+                onClick={confirmDeleteExpense}
+                disabled={deleting}
+              >
+                {deleting ? (
+                  <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
