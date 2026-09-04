@@ -1,10 +1,35 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
-import { Users, Plus, Minus, ArrowRight, Sparkles, Receipt, Zap } from "lucide-react";
+import {
+  Users,
+  Plus,
+  Minus,
+  ArrowRight,
+  Sparkles,
+  Receipt,
+  Zap,
+  ChevronRight,
+  Clock,
+  X,
+  BookOpen,
+} from "lucide-react";
 
+/* ══════════════════════════════════════════════════════════════════════
+   Types
+   ══════════════════════════════════════════════════════════════════════ */
+interface SavedRoom {
+  slug: string;
+  name: string;
+  lastVisited: string;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Landing Page
+   ══════════════════════════════════════════════════════════════════════ */
 export default function LandingPage() {
   const router = useRouter();
   const [roomName, setRoomName] = useState("");
@@ -12,6 +37,42 @@ export default function LandingPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  /* ── Saved rooms from localStorage ─────────────────────────────────── */
+  const [savedRooms, setSavedRooms] = useState<SavedRoom[]>([]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("splitbro_saved_rooms");
+      if (raw) {
+        const parsed: SavedRoom[] = JSON.parse(raw);
+        // Sort by lastVisited descending
+        parsed.sort((a, b) => new Date(b.lastVisited).getTime() - new Date(a.lastVisited).getTime());
+        setSavedRooms(parsed);
+      }
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  const removeSavedRoom = (slug: string) => {
+    const updated = savedRooms.filter((r) => r.slug !== slug);
+    setSavedRooms(updated);
+    localStorage.setItem("splitbro_saved_rooms", JSON.stringify(updated));
+  };
+
+  const formatTimeAgo = (dateStr: string) => {
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const minutes = Math.floor(diff / 60000);
+    if (minutes < 1) return "Just now";
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+    return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+
+  /* ── Member management ─────────────────────────────────────────────── */
   const addMember = () => {
     if (members.length < 20) setMembers([...members, ""]);
   };
@@ -26,6 +87,7 @@ export default function LandingPage() {
     setMembers(updated);
   };
 
+  /* ── Room creation handler ─────────────────────────────────────────── */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -83,6 +145,16 @@ export default function LandingPage() {
       }
       console.log("[Split Bro] Members inserted successfully");
 
+      // Register in localStorage
+      try {
+        const raw = localStorage.getItem("splitbro_saved_rooms");
+        const rooms: SavedRoom[] = raw ? JSON.parse(raw) : [];
+        rooms.unshift({ slug, name: trimmedName, lastVisited: new Date().toISOString() });
+        localStorage.setItem("splitbro_saved_rooms", JSON.stringify(rooms));
+      } catch {
+        // silently fail
+      }
+
       router.push(`/room/${slug}`);
     } catch (err: unknown) {
       console.error("[Split Bro] handleSubmit error:", err);
@@ -133,8 +205,59 @@ export default function LandingPage() {
           ))}
         </div>
 
+        {/* ── Your Khatas (Saved Rooms) ─────────────────── */}
+        {savedRooms.length > 0 && (
+          <div className="bento-card animate-pop stagger-2">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-7 h-7 rounded-lg bg-orange-50 flex items-center justify-center">
+                <BookOpen className="w-3.5 h-3.5 text-[#FF5C28]" />
+              </div>
+              <h2 className="text-sm font-bold text-zinc-900">Your Khatas</h2>
+              <span className="badge badge-neutral ml-auto text-[0.6rem]">
+                {savedRooms.length}
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              {savedRooms.map((r) => (
+                <div
+                  key={r.slug}
+                  className="flex items-center gap-3 group"
+                >
+                  <Link
+                    href={`/room/${r.slug}`}
+                    className="tap-target flex-1 flex items-center gap-3 p-3 -m-0.5 rounded-xl hover:bg-zinc-50/80 transition-colors"
+                  >
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-[#FF5C28]/10 to-[#FF7A45]/10 text-[#FF5C28]">
+                      <Receipt className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[0.8125rem] font-semibold text-zinc-900 truncate">
+                        {r.name}
+                      </p>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <Clock className="w-3 h-3 text-zinc-300" />
+                        <span className="text-[0.625rem] font-medium text-zinc-400">
+                          {formatTimeAgo(r.lastVisited)}
+                        </span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-zinc-300 group-hover:text-zinc-500 transition-colors flex-shrink-0" />
+                  </Link>
+                  <button
+                    className="tap-target p-1.5 rounded-lg text-zinc-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
+                    onClick={() => removeSavedRoom(r.slug)}
+                    aria-label={`Remove ${r.name} from saved rooms`}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── Create Room Form ──────────────────────────── */}
-        <form onSubmit={handleSubmit} className="bento-card space-y-5 animate-pop stagger-2">
+        <form onSubmit={handleSubmit} className={`bento-card space-y-5 animate-pop ${savedRooms.length > 0 ? "stagger-3" : "stagger-2"}`}>
           <h2 className="text-lg font-bold text-zinc-900">
             Create a new Khata
           </h2>
@@ -242,7 +365,7 @@ export default function LandingPage() {
         </form>
 
         {/* ── Footer ────────────────────────────────────── */}
-        <p className="text-center text-xs text-zinc-400 animate-pop stagger-3 pb-4">
+        <p className={`text-center text-xs text-zinc-400 animate-pop ${savedRooms.length > 0 ? "stagger-4" : "stagger-3"} pb-4`}>
           Built by Ahmad Qureshi with ❤️ for hostel life · No data leaves your Khata
         </p>
       </div>

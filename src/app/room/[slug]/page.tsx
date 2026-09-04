@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import type { Room, Member, Expense, ExpenseSplit } from "@/lib/supabaseClient";
 import { computeBalances, computeSettlements, type Transfer } from "@/lib/settlement";
@@ -17,10 +18,46 @@ import {
   X,
   Receipt,
   ChevronDown,
+  ChevronLeft,
   Users,
   Link2,
   Trash2,
+  RotateCcw,
+  Search,
 } from "lucide-react";
+
+/* ══════════════════════════════════════════════════════════════════════
+   Types
+   ══════════════════════════════════════════════════════════════════════ */
+interface SavedRoom {
+  slug: string;
+  name: string;
+  lastVisited: string;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Helpers: localStorage room registry
+   ══════════════════════════════════════════════════════════════════════ */
+function registerRoom(slug: string, name: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = localStorage.getItem("splitbro_saved_rooms");
+    const rooms: SavedRoom[] = raw ? JSON.parse(raw) : [];
+    const now = new Date().toISOString();
+    const idx = rooms.findIndex((r) => r.slug === slug);
+    if (idx >= 0) {
+      rooms[idx].name = name;
+      rooms[idx].lastVisited = now;
+    } else {
+      rooms.push({ slug, name, lastVisited: now });
+    }
+    // Sort most recent first
+    rooms.sort((a, b) => new Date(b.lastVisited).getTime() - new Date(a.lastVisited).getTime());
+    localStorage.setItem("splitbro_saved_rooms", JSON.stringify(rooms));
+  } catch {
+    // silently fail
+  }
+}
 
 /* ══════════════════════════════════════════════════════════════════════
    Room Dashboard Page
@@ -51,6 +88,10 @@ export default function RoomPage() {
 
   /* ── Clipboard toast ───────────────────────────────────────────────── */
   const [copied, setCopied] = useState(false);
+
+  /* ── Expense Filters ───────────────────────────────────────────────── */
+  const [filterPaidBy, setFilterPaidBy] = useState<string | null>(null);
+  const [filterSharedWith, setFilterSharedWith] = useState<string | null>(null);
 
   /* ═══════════════════════════════════════════════════════════════════
      Initial data load
@@ -104,6 +145,15 @@ export default function RoomPage() {
   }, [fetchAll]);
 
   /* ═══════════════════════════════════════════════════════════════════
+     Register room in localStorage on load
+     ═══════════════════════════════════════════════════════════════════ */
+  useEffect(() => {
+    if (room && slug) {
+      registerRoom(slug, room.name);
+    }
+  }, [room, slug]);
+
+  /* ═══════════════════════════════════════════════════════════════════
      Identity check (localStorage)
      ═══════════════════════════════════════════════════════════════════ */
   useEffect(() => {
@@ -150,12 +200,33 @@ export default function RoomPage() {
   }, [room, fetchAll]);
 
   /* ═══════════════════════════════════════════════════════════════════
-     Derived data
+     Derived data (balances always from FULL dataset)
      ═══════════════════════════════════════════════════════════════════ */
   const balances = computeBalances(members, expenses, splits);
   const settlements = computeSettlements(members, expenses, splits);
   const memberMap = new Map(members.map((m) => [m.id, m.name]));
   const totalSpent = expenses.reduce((acc, e) => acc + e.amount, 0);
+
+  /* ═══════════════════════════════════════════════════════════════════
+     Filtered expenses (visual only — does NOT affect balances)
+     ═══════════════════════════════════════════════════════════════════ */
+  const filteredExpenses = expenses.filter((exp) => {
+    if (filterPaidBy && exp.paid_by !== filterPaidBy) return false;
+    if (filterSharedWith) {
+      const involved = splits.some(
+        (s) => s.expense_id === exp.id && s.member_id === filterSharedWith
+      );
+      if (!involved) return false;
+    }
+    return true;
+  });
+
+  const hasActiveFilters = filterPaidBy !== null || filterSharedWith !== null;
+
+  const resetFilters = () => {
+    setFilterPaidBy(null);
+    setFilterSharedWith(null);
+  };
 
   /* ═══════════════════════════════════════════════════════════════════
      Helpers
@@ -275,9 +346,33 @@ export default function RoomPage() {
   return (
     <>
       <main className="min-h-dvh bg-[#F6F7F9]">
-        <div className="app-shell px-4 pt-6 pb-28 safe-bottom space-y-4">
+        <div className="app-shell px-4 pt-4 pb-28 safe-bottom space-y-4">
+          {/* ── Top Navigation Bar ─────────────────────────── */}
+          <div className="flex items-center justify-between animate-pop">
+            <Link
+              href="/"
+              className="tap-target flex items-center gap-1 -ml-1 px-2 py-1.5 rounded-xl text-zinc-500 hover:text-zinc-900 hover:bg-white/70 transition-colors"
+              aria-label="Back to home"
+            >
+              <ChevronLeft className="w-5 h-5" />
+              <span className="text-xs font-medium">Home</span>
+            </Link>
+            <Link
+              href="/"
+              className="tap-target flex items-center gap-1.5"
+            >
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-gradient-to-br from-[#FF5C28] to-[#FF7A45]">
+                <Receipt className="w-3.5 h-3.5 text-white" />
+              </div>
+              <span className="text-sm font-extrabold tracking-tight text-zinc-900">
+                Split <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF5C28] to-[#FF7A45]">Bro</span>
+              </span>
+            </Link>
+            <div className="w-[52px]" /> {/* Spacer for centering */}
+          </div>
+
           {/* ── Header Card ────────────────────────────────── */}
-          <div className="bento-card animate-pop">
+          <div className="bento-card animate-pop stagger-1">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[0.6875rem] font-bold uppercase tracking-widest text-[#FF5C28] mb-0.5">
@@ -304,7 +399,7 @@ export default function RoomPage() {
           </div>
 
           {/* ── Balance Overview ───────────────────────────── */}
-          <div className="animate-pop stagger-1">
+          <div className="animate-pop stagger-2">
             <p className="section-label mb-2.5">Balances</p>
             <div className="grid grid-cols-2 gap-2.5">
               {members.map((m) => {
@@ -345,7 +440,7 @@ export default function RoomPage() {
           </div>
 
           {/* ── Settlements ────────────────────────────────── */}
-          <div className="bento-card animate-pop stagger-2">
+          <div className="bento-card animate-pop stagger-3">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-7 h-7 rounded-lg bg-orange-50 flex items-center justify-center">
                 <ArrowRightLeft className="w-3.5 h-3.5 text-[#FF5C28]" />
@@ -388,10 +483,65 @@ export default function RoomPage() {
           </div>
 
           {/* ── Recent Expenses ────────────────────────────── */}
-          <div className="animate-pop stagger-3">
+          <div className="animate-pop stagger-4">
             <p className="section-label mb-2.5">
               Recent Expenses ({expenses.length})
             </p>
+
+            {/* ── Dual Filter Bar ──────────────────────────── */}
+            {expenses.length > 0 && (
+              <div className="bento-card mb-3 !p-3 space-y-3">
+                {/* Filter 1: Paid By */}
+                <div>
+                  <p className="text-[0.625rem] font-bold uppercase tracking-wider text-zinc-400 mb-1.5 pl-0.5">
+                    Paid By
+                  </p>
+                  <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                    <button
+                      className={`chip ${filterPaidBy === null ? "chip-active" : "chip-inactive"}`}
+                      onClick={() => setFilterPaidBy(null)}
+                    >
+                      All
+                    </button>
+                    {members.map((m) => (
+                      <button
+                        key={m.id}
+                        className={`chip ${filterPaidBy === m.id ? "chip-active" : "chip-inactive"}`}
+                        onClick={() => setFilterPaidBy(filterPaidBy === m.id ? null : m.id)}
+                      >
+                        {m.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Filter 2: Shared With */}
+                <div>
+                  <p className="text-[0.625rem] font-bold uppercase tracking-wider text-zinc-400 mb-1.5 pl-0.5">
+                    Shared With
+                  </p>
+                  <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                    <button
+                      className={`chip ${filterSharedWith === null ? "chip-active" : "chip-inactive"}`}
+                      onClick={() => setFilterSharedWith(null)}
+                    >
+                      Everyone
+                    </button>
+                    {members.map((m) => (
+                      <button
+                        key={m.id}
+                        className={`chip ${filterSharedWith === m.id ? "chip-active" : "chip-inactive"}`}
+                        onClick={() => setFilterSharedWith(filterSharedWith === m.id ? null : m.id)}
+                      >
+                        {m.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Expense List (filtered) ──────────────────── */}
             {expenses.length === 0 ? (
               <div className="bento-card text-center py-10">
                 <Receipt className="w-10 h-10 mx-auto mb-3 text-zinc-200" />
@@ -402,9 +552,23 @@ export default function RoomPage() {
                   Tap the + button to add one
                 </p>
               </div>
+            ) : filteredExpenses.length === 0 ? (
+              <div className="bento-card text-center py-8">
+                <Search className="w-9 h-9 mx-auto mb-3 text-zinc-200" />
+                <p className="text-sm font-semibold text-zinc-400">
+                  No expenses found matching these filters
+                </p>
+                <button
+                  className="tap-target inline-flex items-center gap-1.5 mt-3 px-4 py-2 rounded-xl bg-orange-50 text-[#FF5C28] text-xs font-semibold transition-colors hover:bg-orange-100"
+                  onClick={resetFilters}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reset Filters
+                </button>
+              </div>
             ) : (
               <div className="space-y-2.5">
-                {expenses.map((exp) => {
+                {filteredExpenses.map((exp) => {
                   const expSplits = splits.filter((s) => s.expense_id === exp.id);
                   return (
                     <div key={exp.id} className="bento-card">
